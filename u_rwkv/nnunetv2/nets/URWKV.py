@@ -672,6 +672,78 @@ class ResNetV2(nn.Module):
         return x, features[::-1]
     
 
+
+
+class ModulatedConv2d(nn.Module):
+    """
+    Modulated Convolution with residual connection and spatial modulation.
+    
+    Structure: Conv2d(expand) → SpatialModulation → Residual → BatchNorm → Conv1x1(compress)
+    
+    Args:
+        in_channels: Number of input channels
+        out_channels: Number of output channels
+        kernel_size: Size of the convolving kernel
+        padding: Padding added to input (default: 0)
+        stride: Stride of the convolution (default: 1)
+        growth_rate: Channel expansion ratio for intermediate features (default: 2.0)
+        use_batchnorm: Whether to use batch normalization (default: True)
+    """
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            padding=0,
+            stride=1,
+            growth_rate=2.0,
+            use_batchnorm=True,
+    ):
+        super().__init__()
+        self.use_batchnorm = use_batchnorm
+        
+        # Main convolution with channel expansion
+        self.conv = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            padding,
+            bias=not use_batchnorm
+        )
+        self.relu = nn.ReLU(inplace=True)
+        # Batch normalization (optional)
+        if use_batchnorm:
+            self.bn = nn.BatchNorm2d(out_channels)
+        else:
+            self.bn = None
+        
+
+
+    
+    def forward(self, x):
+        # Main convolution
+        x = self.conv(x)
+        
+        # Spatial modulation
+        x_pool = F.adaptive_avg_pool2d(x, (1, 1))  # Global average pooling
+        x_weight = F.softmax(x_pool, dim=1)         # Softmax normalization
+        x_modulated = x * x_weight                  # Element-wise weighting
+        
+        # Residual connection
+        x = x + x_modulated
+
+        x = self.relu(x)
+        
+        # Batch normalization
+        if self.bn is not None:
+            x = self.bn(x)
+        
+        return x
+   
+
+
+
 class Conv2dReLU(nn.Sequential):
     def __init__(
             self,
@@ -680,6 +752,7 @@ class Conv2dReLU(nn.Sequential):
             kernel_size,
             padding=0,
             stride=1,
+            growth_rate=2.0,
             use_batchnorm=True,
     ):
         conv = nn.Conv2d(
@@ -706,14 +779,14 @@ class DecoderBlock(nn.Module):
             use_batchnorm=True,
     ):
         super().__init__()
-        self.conv1 = Conv2dReLU(
+        self.conv1 = ModulatedConv2d(
             in_channels + skip_channels,
             out_channels,
             kernel_size=3,
             padding=1,
             use_batchnorm=use_batchnorm,
         )
-        self.conv2 = Conv2dReLU(
+        self.conv2 = ModulatedConv2d(
             out_channels,
             out_channels,
             kernel_size=3,
@@ -835,7 +908,7 @@ class URWKVEncoder(BaseModule):
         super().__init__()
         
         # ResNet backbone for feature extraction
-        self.resnet = ResNetV2(block_units=[3, 4, 9], width_factor=1.0)
+        self.resnet = ResNetV2(block_units=[3, 3, 3], width_factor=1.0)
         
         # 动态计算VRWKV的img_size参数
         # ResNet总降采样倍数：stride=2(root) * stride=2(maxpool) * stride=2(block2) * stride=2(block3) = 16x
@@ -892,7 +965,7 @@ class U_RWKV(BaseModule):
                  patch_size=16,
                  in_channels=3,
                  out_channels=1,
-                 embed_dims=256,
+                 embed_dims=768,
                  depth=12,
                  decoder_channels=(256, 128, 64, 32),
                  skip_channels=(512, 256, 64, 0),
@@ -1077,7 +1150,7 @@ class U_RWKV(BaseModule):
 
 
 def load_pretrained_ckpt(model, 
-                         vrwkv_path="./U-RWKV/data/pretrained/vrwkv_b_in1k_224.pth", 
+                         vrwkv_path="/home/user/公共的/U-RWKV/data/pretrained/vrwkv_b_in1k_224.pth", 
                          strict=False):
     """
     简化版权重加载函数，只处理VRWKV权重
@@ -1187,7 +1260,7 @@ def get_u_rwkv_from_plans(
     num_input_channels: int,
     deep_supervision: bool = False,
     use_pretrain: bool = True,
-    resnet_path: str = "./U-RWKV/data/pretrained/R50.npz"
+    resnet_path: str = "/home/user/公共的/U-RWKV/data/pretrained/R50.npz"
 ):
 
     
@@ -1230,3 +1303,9 @@ def get_u_rwkv_from_plans(
         model = load_pretrained_ckpt(model)
 
     return model
+    
+if __name__ == "__main__":
+    model = U_RWKV().cuda()
+    model.eval()
+    x = torch.randn(1, 3, 224, 224).cuda()
+    print(model(x).shape)
