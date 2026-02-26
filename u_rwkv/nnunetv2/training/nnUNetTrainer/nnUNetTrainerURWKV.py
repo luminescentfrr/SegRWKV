@@ -101,10 +101,6 @@ class nnUNetTrainerURWKV(nnUNetTrainer):
 
     def _get_deep_supervision_scales(self):
         if self.enable_deep_supervision:
-            # 修改深度监督尺度顺序以匹配U-RWKV解码器的实际输出顺序
-            # 解码器输出顺序：decoder_features[0]=40×40, [1]=80×80, [2]=160×160, [3]=320×320
-            # 对应尺度从粗到细：0.125 -> 0.25 -> 0.5 -> 1.0
-            # 这样确保target下采样尺寸与prediction输出尺寸匹配
             deep_supervision_scales = [[0.125,0.125], [0.25,0.25], [0.5,0.5], [1.0,1.0]]
         else:
             deep_supervision_scales = None  # for train and val_transforms
